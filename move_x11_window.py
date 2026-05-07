@@ -7,10 +7,23 @@ import time
 X = ctypes.cdll.LoadLibrary("libX11.so.6")
 X.XOpenDisplay.argtypes = [ctypes.c_char_p]
 X.XOpenDisplay.restype = ctypes.c_void_p
+X.XCloseDisplay.argtypes = [ctypes.c_void_p]
+X.XCloseDisplay.restype = ctypes.c_int
 X.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
 X.XDefaultRootWindow.restype = ctypes.c_ulong
 X.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
 X.XInternAtom.restype = ctypes.c_ulong
+X.XChangeProperty.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_ulong,
+    ctypes.c_ulong,
+    ctypes.c_ulong,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.c_ulong),
+    ctypes.c_int,
+]
+X.XChangeProperty.restype = ctypes.c_int
 X.XGetWindowProperty.argtypes = [
     ctypes.c_void_p,
     ctypes.c_ulong,
@@ -44,10 +57,12 @@ X.XMoveResizeWindow.argtypes = [
     ctypes.c_uint,
     ctypes.c_uint,
 ]
-X.XMapRaised.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+X.XLowerWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
 X.XFlush.argtypes = [ctypes.c_void_p]
 
+XA_ATOM = 4
 XA_STRING = 31
+PROP_MODE_REPLACE = 0
 SUCCESS = 0
 
 
@@ -117,6 +132,20 @@ def find_window(display, root, title, net_wm_name, utf8_string, wm_name):
     return None
 
 
+def set_atom_list(display, window, property_atom, values):
+    atom_array = (ctypes.c_ulong * len(values))(*values)
+    X.XChangeProperty(
+        display,
+        window,
+        property_atom,
+        XA_ATOM,
+        32,
+        PROP_MODE_REPLACE,
+        atom_array,
+        len(values),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--title", required=True)
@@ -135,6 +164,10 @@ def main():
     net_wm_name = X.XInternAtom(display, b"_NET_WM_NAME", False)
     utf8_string = X.XInternAtom(display, b"UTF8_STRING", False)
     wm_name = X.XInternAtom(display, b"WM_NAME", False)
+    net_wm_state = X.XInternAtom(display, b"_NET_WM_STATE", False)
+    net_wm_state_below = X.XInternAtom(display, b"_NET_WM_STATE_BELOW", False)
+    net_wm_state_skip_taskbar = X.XInternAtom(display, b"_NET_WM_STATE_SKIP_TASKBAR", False)
+    net_wm_state_skip_pager = X.XInternAtom(display, b"_NET_WM_STATE_SKIP_PAGER", False)
 
     deadline = time.time() + args.timeout
     window = None
@@ -147,9 +180,16 @@ def main():
     if not window:
         raise SystemExit(f"Could not find X11 window titled {args.title!r}")
 
+    set_atom_list(
+        display,
+        window,
+        net_wm_state,
+        [net_wm_state_below, net_wm_state_skip_taskbar, net_wm_state_skip_pager],
+    )
     X.XMoveResizeWindow(display, window, args.x, args.y, args.width, args.height)
-    X.XMapRaised(display, window)
+    X.XLowerWindow(display, window)
     X.XFlush(display)
+    X.XCloseDisplay(display)
 
 
 if __name__ == "__main__":

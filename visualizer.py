@@ -18,10 +18,23 @@ from gi.repository import Gdk, GLib, Gtk
 
 
 BAR_COUNT = 72
-WINDOW_WIDTH = 900
-WINDOW_HEIGHT = 220
-UPDATE_MS = 16
+WINDOW_WIDTH = 1120
+WINDOW_HEIGHT = 180
+UPDATE_MS = 33
 SAMPLE_RATE = 44100
+FRAME_COUNT = 1024
+RECONNECT_SECONDS = 2.5
+
+
+def clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
+
+
+def set_hex(cr, hex_value, alpha=1.0):
+    red = int(hex_value[0:2], 16) / 255.0
+    green = int(hex_value[2:4], 16) / 255.0
+    blue = int(hex_value[4:6], 16) / 255.0
+    cr.set_source_rgba(red, green, blue, alpha)
 
 
 class AudioLevels:
@@ -31,15 +44,22 @@ class AudioLevels:
         self.running = True
         self.proc = None
         self.using_audio = False
+        self.thread = None
 
     def start(self):
-        thread = threading.Thread(target=self._run, daemon=True)
-        thread.start()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
 
     def stop(self):
         self.running = False
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
+            try:
+                self.proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
 
     def snapshot(self):
         with self.lock:
@@ -51,15 +71,17 @@ class AudioLevels:
             self.bands = values
 
     def _run(self):
-        source = self._default_monitor_source()
-        if source:
+        while self.running:
+            source = self._default_monitor_source()
+            if not source:
+                self._fake_levels(RECONNECT_SECONDS)
+                continue
+
             try:
                 self._read_parec(source)
-                return
             except Exception:
-                pass
-
-        self._fake_levels()
+                self._set_bands([0.0] * BAR_COUNT, False)
+                self._fake_levels(RECONNECT_SECONDS)
 
     def _default_monitor_source(self):
         try:
@@ -88,8 +110,7 @@ class AudioLevels:
             stderr=subprocess.DEVNULL,
         )
 
-        frame_count = 256
-        byte_count = frame_count * 2
+        byte_count = FRAME_COUNT * 2
         previous = [0.0] * BAR_COUNT
 
         while self.running:
@@ -97,26 +118,30 @@ class AudioLevels:
             if len(data) < byte_count:
                 break
 
-            samples = struct.unpack(f"<{frame_count}h", data)
+            samples = struct.unpack(f"<{FRAME_COUNT}h", data)
             values = []
-            chunk = max(1, frame_count // BAR_COUNT)
 
             for index in range(BAR_COUNT):
-                start = index * chunk
-                segment = samples[start : start + chunk]
+                start = int(index * FRAME_COUNT / BAR_COUNT)
+                end = int((index + 1) * FRAME_COUNT / BAR_COUNT)
+                segment = samples[start:end]
                 if not segment:
                     values.append(0.0)
                     continue
                 rms = math.sqrt(sum(sample * sample for sample in segment) / len(segment))
-                boosted = min(1.0, (rms / 18000.0) ** 0.65)
-                values.append(max(boosted, previous[index] * 0.78))
+                boosted = clamp((rms / 15500.0) ** 0.7, 0.0, 1.0)
+                values.append(max(boosted, previous[index] * 0.82))
 
             previous = values
             self._set_bands(values, True)
 
-    def _fake_levels(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+
+    def _fake_levels(self, duration=None):
         phase = 0.0
-        while self.running:
+        deadline = time.monotonic() + duration if duration else None
+        while self.running and (deadline is None or time.monotonic() < deadline):
             phase += 0.09
             values = []
             for index in range(BAR_COUNT):
@@ -134,18 +159,20 @@ class VisualizerWindow(Gtk.ApplicationWindow):
         self.set_decorated(False)
         self.set_resizable(False)
         self.set_focusable(False)
+        self.set_can_focus(False)
         self.add_css_class("visualizer-window")
 
         self.display_bands = [0.0] * BAR_COUNT
         self.levels = levels
+        self.tick_id = None
 
         self.area = Gtk.DrawingArea()
         self.area.add_css_class("visualizer-canvas")
         self.area.set_draw_func(self.draw)
-        self.area.add_tick_callback(self.tick)
         self.set_child(self.area)
+        self.tick_id = GLib.timeout_add(UPDATE_MS, self.tick)
 
-    def tick(self, widget, frame_clock):
+    def tick(self):
         target, _using_audio = self.levels.snapshot()
         for index, value in enumerate(target):
             current = self.display_bands[index]
@@ -156,29 +183,51 @@ class VisualizerWindow(Gtk.ApplicationWindow):
         return GLib.SOURCE_CONTINUE
 
     def draw(self, area, cr, width, height):
-        self.levels.snapshot()
-
         cr.set_operator(cairo.OPERATOR_SOURCE)
         cr.set_source_rgba(0.0, 0.0, 0.0, 0.0)
         cr.paint()
         cr.set_operator(cairo.OPERATOR_OVER)
 
+        using_audio = self.levels.snapshot()[1]
+
+        pad_x = 24
+        pad_top = 18
+        pad_bottom = 20
         gap = 4
-        bar_width = max(2, (width - gap * (BAR_COUNT + 1)) / BAR_COUNT)
-        baseline = height - 22
-        max_height = height - 50
+        usable_width = max(1, width - pad_x * 2)
+        bar_width = max(2, (usable_width - gap * (BAR_COUNT - 1)) / BAR_COUNT)
+        baseline = height - pad_bottom
+        max_height = max(10, height - pad_top - pad_bottom)
 
         for index, value in enumerate(self.display_bands):
-            x = gap + index * (bar_width + gap)
+            x = pad_x + index * (bar_width + gap)
             bar_height = max(3, value * max_height)
             y = baseline - bar_height
-            hue = index / max(1, BAR_COUNT - 1)
-            red = 0.12 + hue * 0.35
-            green = 0.82 - hue * 0.25
-            blue = 1.0
-            cr.set_source_rgba(red, green, blue, 1.0)
+            mix = index / max(1, BAR_COUNT - 1)
+            red = 0.0 + mix * 0.55
+            green = 0.9 - mix * 0.35
+            blue = 1.0 - mix * 0.04
+            alpha = 0.52 + value * 0.42
+
+            cr.set_source_rgba(red, green, blue, alpha * 0.22)
+            rounded_rectangle(cr, x - 1, y - 2, bar_width + 2, bar_height + 4, min(6, bar_width / 2 + 1))
+            cr.fill()
+
+            cr.set_source_rgba(red, green, blue, alpha)
             rounded_rectangle(cr, x, y, bar_width, bar_height, min(5, bar_width / 2))
             cr.fill()
+
+            if value > 0.58:
+                set_hex(cr, "f8fafc", (value - 0.58) * 0.34)
+                cr.rectangle(x, y, bar_width, min(8, bar_height))
+                cr.fill()
+
+        if not using_audio:
+            cr.select_font_face("JetBrains Mono", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+            cr.set_font_size(10)
+            set_hex(cr, "facc15", 0.82)
+            cr.move_to(pad_x, pad_top + 10)
+            cr.show_text("TEST SIGNAL")
 
 
 def rounded_rectangle(cr, x, y, width, height, radius):
