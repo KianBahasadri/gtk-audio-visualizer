@@ -9,19 +9,12 @@ Run it with:
 python3 visualizer.py
 ```
 
-Or launch a centered X11-backed desktop window:
+Or launch one shared GTK process that draws an underlay window on each monitor:
 
 ```bash
 ./run-visualizer-all-monitors.sh
 ```
 
-The launcher defaults to one window because multiple transparent X11 windows can make
-GNOME/Mutter unstable. To force one visualizer per monitor:
-
-```bash
-VISUALIZER_MAX_WINDOWS=all ./run-visualizer-all-monitors.sh
-```
-
-It captures the default PulseAudio/PipeWire monitor with `parec`. If capture fails, it displays a test animation instead. The launcher centers each visualizer on its monitor at the same `1120px` width as the Codex Conky panel, clamping to narrower monitors. The window draws with transparency and updates at roughly 30 FPS.
+It captures the default PulseAudio/PipeWire monitor with `parec`. If capture fails, it displays a test animation instead. The launcher starts one GTK process and one audio capture, then creates one transparent underlay window per monitor because GNOME/Xwayland may clip a single giant window to one output. Each monitor gets a centered `1120px` visualizer, clamped to narrower monitors. The windows draw with transparency and update at roughly 30 FPS.
 
 On GNOME Wayland this is still a normal app window. GNOME does not let regular apps become true click-through wallpaper clients, but this gives us a controllable base for visual design and audio behavior.

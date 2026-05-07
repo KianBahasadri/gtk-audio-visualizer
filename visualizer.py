@@ -164,6 +164,7 @@ class VisualizerWindow(Gtk.ApplicationWindow):
 
         self.display_bands = [0.0] * BAR_COUNT
         self.levels = levels
+        self.segments = parse_segments(options.segments)
         self.tick_id = None
 
         self.area = Gtk.DrawingArea()
@@ -189,18 +190,22 @@ class VisualizerWindow(Gtk.ApplicationWindow):
         cr.set_operator(cairo.OPERATOR_OVER)
 
         using_audio = self.levels.snapshot()[1]
+        segments = self.segments or [(0, 0, width, height)]
+        for x, y, segment_width, segment_height in segments:
+            self.draw_visualizer(cr, x, y, segment_width, segment_height, using_audio)
 
+    def draw_visualizer(self, cr, origin_x, origin_y, width, height, using_audio):
         pad_x = 24
         pad_top = 18
         pad_bottom = 20
         gap = 4
         usable_width = max(1, width - pad_x * 2)
         bar_width = max(2, (usable_width - gap * (BAR_COUNT - 1)) / BAR_COUNT)
-        baseline = height - pad_bottom
+        baseline = origin_y + height - pad_bottom
         max_height = max(10, height - pad_top - pad_bottom)
 
         for index, value in enumerate(self.display_bands):
-            x = pad_x + index * (bar_width + gap)
+            x = origin_x + pad_x + index * (bar_width + gap)
             bar_height = max(3, value * max_height)
             y = baseline - bar_height
             mix = index / max(1, BAR_COUNT - 1)
@@ -226,7 +231,7 @@ class VisualizerWindow(Gtk.ApplicationWindow):
             cr.select_font_face("JetBrains Mono", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
             cr.set_font_size(10)
             set_hex(cr, "facc15", 0.82)
-            cr.move_to(pad_x, pad_top + 10)
+            cr.move_to(origin_x + pad_x, origin_y + pad_top + 10)
             cr.show_text("TEST SIGNAL")
 
 
@@ -239,19 +244,50 @@ def rounded_rectangle(cr, x, y, width, height, radius):
     cr.arc(x + radius, y + radius, radius, math.pi, 3 * math.pi / 2)
     cr.close_path()
 
+
+def parse_segments(value):
+    if not value:
+        return []
+
+    segments = []
+    for item in value.split(";"):
+        parts = item.split(",")
+        if len(parts) != 4:
+            continue
+        try:
+            x, y, width, height = [int(part) for part in parts]
+        except ValueError:
+            continue
+        if width > 0 and height > 0:
+            segments.append((x, y, width, height))
+    return segments
+
+
 class VisualizerApp(Gtk.Application):
     def __init__(self, options):
         app_suffix = re.sub(r"[^A-Za-z0-9]", "", options.title) or "Default"
         super().__init__(application_id=f"dev.local.WaylandVisualizerTest.{app_suffix}")
         self.options = options
         self.levels = AudioLevels()
-        self.window = None
+        self.windows = []
 
     def do_activate(self):
         install_css()
         self.levels.start()
-        self.window = VisualizerWindow(self, self.levels, self.options)
-        self.window.present()
+        window_specs = parse_segments(self.options.windows)
+        if not window_specs:
+            window_specs = [(0, 0, self.options.width, self.options.height)]
+
+        for index, (_x, _y, width, height) in enumerate(window_specs):
+            window_options = argparse.Namespace(
+                title=self.options.title if len(window_specs) == 1 else f"{self.options.title} {index}",
+                width=width,
+                height=height,
+                segments="",
+            )
+            window = VisualizerWindow(self, self.levels, window_options)
+            self.windows.append(window)
+            window.present()
 
     def do_shutdown(self):
         self.levels.stop()
@@ -285,6 +321,8 @@ def main():
     parser.add_argument("--title", default="Wayland Visualizer Test")
     parser.add_argument("--width", type=int, default=WINDOW_WIDTH)
     parser.add_argument("--height", type=int, default=WINDOW_HEIGHT)
+    parser.add_argument("--segments", default="")
+    parser.add_argument("--windows", default="")
     options = parser.parse_args()
 
     app = VisualizerApp(options)
