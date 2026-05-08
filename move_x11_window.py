@@ -61,9 +61,11 @@ X.XLowerWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
 X.XFlush.argtypes = [ctypes.c_void_p]
 
 XA_ATOM = 4
+XA_CARDINAL = 6
 XA_STRING = 31
 PROP_MODE_REPLACE = 0
 SUCCESS = 0
+ALL_DESKTOPS = 0xFFFFFFFF
 
 
 def get_property(display, window, atom, atom_type):
@@ -146,6 +148,20 @@ def set_atom_list(display, window, property_atom, values):
     )
 
 
+def set_cardinal(display, window, property_atom, value):
+    cardinal = ctypes.c_ulong(value)
+    X.XChangeProperty(
+        display,
+        window,
+        property_atom,
+        XA_CARDINAL,
+        32,
+        PROP_MODE_REPLACE,
+        ctypes.byref(cardinal),
+        1,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--title", required=True)
@@ -154,6 +170,12 @@ def main():
     parser.add_argument("--width", type=int, required=True)
     parser.add_argument("--height", type=int, required=True)
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument(
+        "--window-type",
+        choices=("normal", "desktop", "dock", "utility"),
+        default="normal",
+    )
+    parser.add_argument("--sticky", action="store_true")
     args = parser.parse_args()
 
     display = X.XOpenDisplay(None)
@@ -168,6 +190,14 @@ def main():
     net_wm_state_below = X.XInternAtom(display, b"_NET_WM_STATE_BELOW", False)
     net_wm_state_skip_taskbar = X.XInternAtom(display, b"_NET_WM_STATE_SKIP_TASKBAR", False)
     net_wm_state_skip_pager = X.XInternAtom(display, b"_NET_WM_STATE_SKIP_PAGER", False)
+    net_wm_state_sticky = X.XInternAtom(display, b"_NET_WM_STATE_STICKY", False)
+    net_wm_desktop = X.XInternAtom(display, b"_NET_WM_DESKTOP", False)
+    net_wm_window_type = X.XInternAtom(display, b"_NET_WM_WINDOW_TYPE", False)
+    window_type_atoms = {
+        "desktop": X.XInternAtom(display, b"_NET_WM_WINDOW_TYPE_DESKTOP", False),
+        "dock": X.XInternAtom(display, b"_NET_WM_WINDOW_TYPE_DOCK", False),
+        "utility": X.XInternAtom(display, b"_NET_WM_WINDOW_TYPE_UTILITY", False),
+    }
 
     deadline = time.time() + args.timeout
     window = None
@@ -180,12 +210,15 @@ def main():
     if not window:
         raise SystemExit(f"Could not find X11 window titled {args.title!r}")
 
-    set_atom_list(
-        display,
-        window,
-        net_wm_state,
-        [net_wm_state_below, net_wm_state_skip_taskbar, net_wm_state_skip_pager],
-    )
+    state_atoms = [net_wm_state_below, net_wm_state_skip_taskbar, net_wm_state_skip_pager]
+    if args.sticky:
+        state_atoms.append(net_wm_state_sticky)
+        set_cardinal(display, window, net_wm_desktop, ALL_DESKTOPS)
+
+    if args.window_type != "normal":
+        set_atom_list(display, window, net_wm_window_type, [window_type_atoms[args.window_type]])
+
+    set_atom_list(display, window, net_wm_state, state_atoms)
     X.XMoveResizeWindow(display, window, args.x, args.y, args.width, args.height)
     X.XLowerWindow(display, window)
     X.XFlush(display)

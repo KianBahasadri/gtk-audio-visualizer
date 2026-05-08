@@ -1,0 +1,7 @@
+{
+  "uuid": "audio-visualizer-wallpaper@local",
+  "name": "Audio Visualizer Wallpaper",
+  "description": "Experimental GNOME Shell actor version of the desktop audio visualizer.",
+  "shell-version": ["50"],
+  "version": 1
+}

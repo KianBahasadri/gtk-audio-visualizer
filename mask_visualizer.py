@@ -87,7 +87,46 @@ class MaskedVisualizerWindow(visualizer.VisualizerWindow):
         self.test_mask_surface = None
         self.test_mask_size = None
         self.debug_mask_overlay = options.debug_mask_overlay
+        self.render_surface = None
+        self.render_context = None
+        self.render_size = None
+        self.mask_pattern = None
+        self.mask_pattern_key = None
+        self.overlay_pattern = None
+        self.overlay_pattern_key = None
+        self.use_frame_clock = options.use_frame_clock
+        self.frame_tick_id = None
+        self.last_frame_time_us = 0
+        self.frame_accumulator_ms = 0.0
         super().__init__(app, levels, options)
+        if self.use_frame_clock:
+            if self.tick_id:
+                visualizer.GLib.source_remove(self.tick_id)
+                self.tick_id = None
+            self.frame_tick_id = self.area.add_tick_callback(self.frame_clock_tick)
+
+    def frame_clock_tick(self, _widget, frame_clock):
+        frame_time_us = frame_clock.get_frame_time()
+        if self.last_frame_time_us:
+            elapsed_ms = (frame_time_us - self.last_frame_time_us) / 1000.0
+        else:
+            elapsed_ms = visualizer.UPDATE_MS
+        self.last_frame_time_us = frame_time_us
+        self.frame_accumulator_ms += elapsed_ms
+
+        while self.frame_accumulator_ms >= visualizer.UPDATE_MS:
+            self.update_display_bands()
+            self.frame_accumulator_ms -= visualizer.UPDATE_MS
+
+        self.area.queue_draw()
+        return True
+
+    def update_display_bands(self):
+        target, _using_audio = self.levels.snapshot()
+        for index, value in enumerate(target):
+            current = self.display_bands[index]
+            speed = 0.62 if value > current else 0.22
+            self.display_bands[index] = current + (value - current) * speed
 
     def draw(self, area, cr, width, height):
         cr.set_operator(cairo.OPERATOR_SOURCE)
@@ -95,12 +134,8 @@ class MaskedVisualizerWindow(visualizer.VisualizerWindow):
         cr.paint()
         cr.set_operator(cairo.OPERATOR_OVER)
 
-        visualizer_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-        visualizer_cr = cairo.Context(visualizer_surface)
-        visualizer_cr.set_operator(cairo.OPERATOR_SOURCE)
-        visualizer_cr.set_source_rgba(0.0, 0.0, 0.0, 0.0)
-        visualizer_cr.paint()
-        visualizer_cr.set_operator(cairo.OPERATOR_OVER)
+        visualizer_surface, visualizer_cr = self.get_render_target(width, height)
+        clear_surface(visualizer_cr)
 
         using_audio = self.levels.snapshot()[1]
         segments = self.segments or [(0, 0, width, height)]
@@ -120,22 +155,58 @@ class MaskedVisualizerWindow(visualizer.VisualizerWindow):
             mask_surface = self.test_mask_surface
 
         if mask_surface:
-            erase_with_alpha_mask(visualizer_surface, mask_surface, width, height)
+            erase_with_alpha_mask(
+                visualizer_surface,
+                visualizer_cr,
+                self.get_mask_pattern(mask_surface, width, height),
+            )
 
         cr.set_source_surface(visualizer_surface, 0, 0)
         cr.paint()
 
         if self.overlay_surface:
-            draw_image_overlay(cr, self.overlay_surface, width, height, self.overlay_opacity)
+            draw_image_overlay(
+                cr,
+                self.get_overlay_pattern(self.overlay_surface, width, height),
+                self.overlay_opacity,
+            )
 
         if mask_surface and self.debug_mask_overlay:
             draw_mask_overlay(cr, mask_surface, width, height)
 
+    def get_render_target(self, width, height):
+        size = (width, height)
+        if self.render_size != size:
+            self.render_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+            self.render_context = cairo.Context(self.render_surface)
+            self.render_size = size
+        return self.render_surface, self.render_context
 
-def erase_with_alpha_mask(target_surface, mask_surface, width, height):
-    cr = cairo.Context(target_surface)
+    def get_mask_pattern(self, mask_surface, width, height):
+        key = (id(mask_surface), width, height)
+        if self.mask_pattern_key != key:
+            self.mask_pattern = make_scaled_surface_pattern(mask_surface, width, height)
+            self.mask_pattern_key = key
+        return self.mask_pattern
+
+    def get_overlay_pattern(self, image_surface, width, height):
+        key = (id(image_surface), width, height)
+        if self.overlay_pattern_key != key:
+            self.overlay_pattern = make_scaled_surface_pattern(image_surface, width, height)
+            self.overlay_pattern_key = key
+        return self.overlay_pattern
+
+
+def clear_surface(cr):
+    cr.set_operator(cairo.OPERATOR_SOURCE)
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.0)
+    cr.paint()
+    cr.set_operator(cairo.OPERATOR_OVER)
+
+
+def erase_with_alpha_mask(target_surface, cr, mask_pattern):
     cr.set_operator(cairo.OPERATOR_DEST_OUT)
-    cr.set_source(make_scaled_surface_pattern(mask_surface, width, height))
+    cr.set_source(mask_pattern)
     cr.paint()
     cr.set_operator(cairo.OPERATOR_OVER)
     target_surface.flush()
@@ -152,10 +223,10 @@ def draw_mask_overlay(cr, mask_surface, width, height):
     cr.restore()
 
 
-def draw_image_overlay(cr, image_surface, width, height, opacity):
+def draw_image_overlay(cr, image_pattern, opacity):
     cr.save()
     cr.set_operator(cairo.OPERATOR_OVER)
-    cr.set_source(make_scaled_surface_pattern(image_surface, width, height))
+    cr.set_source(image_pattern)
     cr.paint_with_alpha(opacity)
     cr.restore()
 
@@ -203,6 +274,7 @@ class MaskedVisualizerApp(Gtk.Application):
                 overlay_opacity=self.options.overlay_opacity,
                 test_mask=self.options.test_mask,
                 debug_mask_overlay=self.options.debug_mask_overlay,
+                use_frame_clock=self.options.use_frame_clock,
             )
             window = MaskedVisualizerWindow(self, self.levels, window_options)
             self.windows.append(window)
@@ -225,6 +297,7 @@ def main():
     parser.add_argument("--overlay-image", default="")
     parser.add_argument("--overlay-images", default="")
     parser.add_argument("--overlay-opacity", type=float, default=0.45)
+    parser.add_argument("--use-frame-clock", action="store_true")
     parser.add_argument(
         "--test-mask",
         choices=("circle", "rectangle", "columns"),

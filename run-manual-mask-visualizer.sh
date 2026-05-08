@@ -8,6 +8,9 @@ mask_dir="${VISUALIZER_MASK_DIR:-masks}"
 threshold="${VISUALIZER_MASK_THRESHOLD:-128}"
 blur="${VISUALIZER_MASK_BLUR:-1.0}"
 debug="${VISUALIZER_MASK_DEBUG:-0}"
+frame_clock="${VISUALIZER_FRAME_CLOCK:-0}"
+x11_window_type="${VISUALIZER_X11_WINDOW_TYPE:-normal}"
+x11_sticky="${VISUALIZER_X11_STICKY:-1}"
 
 cleanup() {
   if [ -n "${pid:-}" ]; then
@@ -84,6 +87,9 @@ visualizer_args=(
 if [ "$debug" = "1" ]; then
   visualizer_args+=(--debug-mask-overlay)
 fi
+if [ "$frame_clock" = "1" ]; then
+  visualizer_args+=(--use-frame-clock)
+fi
 
 GDK_BACKEND=x11 ./mask_visualizer.py "${visualizer_args[@]}" &
 pid="$!"
@@ -94,12 +100,19 @@ for index in "${!window_array[@]}"; do
   if [ "${#window_array[@]}" -gt 1 ]; then
     window_title="$title $index"
   fi
-  if ! python3 move_x11_window.py \
-    --title "$window_title" \
-    --x "$window_x" \
-    --y "$window_y" \
-    --width "$width" \
-    --height "$height"; then
+  move_args=(
+    --title "$window_title"
+    --x "$window_x"
+    --y "$window_y"
+    --width "$width"
+    --height "$height"
+    --window-type "$x11_window_type"
+  )
+  if [ "$x11_sticky" = "1" ]; then
+    move_args+=(--sticky)
+  fi
+
+  if ! python3 move_x11_window.py "${move_args[@]}"; then
     echo "Could not position $window_title" >&2
   fi
 done
