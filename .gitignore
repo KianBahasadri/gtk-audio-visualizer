@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.cache/
+masks/*
+!masks/.gitkeep
+!masks/README.md
