@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+root=".."
 
 opacity="${VISUALIZER_WALLPAPER_OVERLAY_OPACITY:-0.45}"
 mode="${VISUALIZER_WALLPAPER_OVERLAY_MODE:-edges}"
@@ -14,7 +15,7 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-probe_output="$(python3 wallpaper_probe.py)"
+probe_output="$(python3 "$root/scripts/wallpaper_probe.py" --out-dir "$root/.cache/wallpaper-probe")"
 printf '%s\n' "$probe_output"
 
 windows="$(printf '%s\n' "$probe_output" | awk -F': ' '/^visualizer_windows_arg:/ {print $2}')"

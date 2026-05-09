@@ -11,7 +11,7 @@ const BAR_COUNT = 72;
 const VISUALIZER_WIDTH = 1120;
 const VISUALIZER_HEIGHT = 180;
 const UPDATE_MS = 33;
-const HELPER_PATH = '/home/kian/live-wallpaper/gtk-audio-visualizer/audio_levels_json.py';
+const HELPER_PATH = '/home/kian/live-wallpaper/gtk-audio-visualizer/scripts/audio_levels_json.py';
 const LOG_PREFIX = 'audio-visualizer-wallpaper';
 const MASK_NAMES = ['left', 'center', 'right'];
 

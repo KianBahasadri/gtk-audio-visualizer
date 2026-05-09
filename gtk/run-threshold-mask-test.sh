@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+root=".."
 
 title="Foreground Mask Probe"
 method="${VISUALIZER_MASK_METHOD:-threshold}"
@@ -15,7 +16,7 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-probe_output="$(python3 wallpaper_probe.py)"
+probe_output="$(python3 "$root/scripts/wallpaper_probe.py" --out-dir "$root/.cache/wallpaper-probe")"
 printf '%s\n' "$probe_output"
 
 windows="$(printf '%s\n' "$probe_output" | awk -F': ' '/^visualizer_windows_arg:/ {print $2}')"
@@ -30,8 +31,8 @@ IFS=";" read -r -a crop_array <<< "$crops"
 mask_paths=()
 for index in "${!crop_array[@]}"; do
   crop="${crop_array[$index]}"
-  mask=".cache/wallpaper-probe/foreground-mask-${index}.png"
-  preview=".cache/wallpaper-probe/foreground-mask-${index}-preview.png"
+  mask="$root/.cache/wallpaper-probe/foreground-mask-${index}.png"
+  preview="$root/.cache/wallpaper-probe/foreground-mask-${index}-preview.png"
   if [ "$method" = "rembg" ]; then
     uv run --with 'rembg[cpu]' python3 generate_crop_mask.py \
       --method "$method" \

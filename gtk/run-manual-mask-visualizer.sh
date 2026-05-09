@@ -2,9 +2,10 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+root=".."
 
 title="${VISUALIZER_MASK_TITLE:-Manual Mask Visualizer}"
-mask_dir="${VISUALIZER_MASK_DIR:-masks}"
+mask_dir="${VISUALIZER_MASK_DIR:-$root/masks}"
 threshold="${VISUALIZER_MASK_THRESHOLD:-128}"
 blur="${VISUALIZER_MASK_BLUR:-1.0}"
 debug="${VISUALIZER_MASK_DEBUG:-0}"
@@ -19,7 +20,7 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-probe_output="$(python3 wallpaper_probe.py)"
+probe_output="$(python3 "$root/scripts/wallpaper_probe.py" --out-dir "$root/.cache/wallpaper-probe")"
 printf '%s\n' "$probe_output"
 
 windows="$(printf '%s\n' "$probe_output" | awk -F': ' '/^visualizer_windows_arg:/ {print $2}')"
@@ -55,8 +56,8 @@ for index in "${!window_array[@]}"; do
     exit 1
   fi
 
-  prepared_mask=".cache/manual-masks/$name-prepared.png"
-  preview=".cache/manual-masks/$name-preview.png"
+  prepared_mask="$root/.cache/manual-masks/$name-prepared.png"
+  preview="$root/.cache/manual-masks/$name-preview.png"
   args=(
     --input "$source_mask"
     --monitor "$monitor"
@@ -69,7 +70,7 @@ for index in "${!window_array[@]}"; do
     args+=(--wallpaper-crop "${crop_array[$index]}" --debug-preview "$preview")
   fi
 
-  python3 prepare_monitor_mask.py "${args[@]}"
+  python3 "$root/scripts/prepare_monitor_mask.py" "${args[@]}"
   mask_paths+=("$prepared_mask")
 done
 

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 import json
+import sys
 from pathlib import Path
 
 from PIL import Image
 
-import visualizer
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "gtk"))
+
+import visualizer  # noqa: E402
 
 
-MASK_DIR = Path(".cache/manual-masks")
-OUT_DIR = Path("gnome-extension/masks")
+MASK_DIR = ROOT / ".cache" / "manual-masks"
+OUT_DIR = ROOT / "gnome-extension" / "masks"
 NAMES = ("left", "center", "right")
 
 
@@ -79,7 +83,7 @@ def main():
         print(f"wrote: {out_path}")
 
     if not built:
-        raise SystemExit("no prepared masks found; run ./run-manual-mask-visualizer.sh once or prepare masks first")
+        raise SystemExit("no prepared masks found; run gtk/run-manual-mask-visualizer.sh once or prepare masks first")
 
 
 if __name__ == "__main__":
