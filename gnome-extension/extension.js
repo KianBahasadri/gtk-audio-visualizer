@@ -11,7 +11,6 @@ const BAR_COUNT = 72;
 const VISUALIZER_WIDTH = 1120;
 const VISUALIZER_HEIGHT = 180;
 const UPDATE_MS = 33;
-const HELPER_PATH = '/home/kian/live-wallpaper/gtk-audio-visualizer/scripts/audio_levels_json.py';
 const LOG_PREFIX = 'audio-visualizer-wallpaper';
 const MASK_NAMES = ['left', 'center', 'right'];
 
@@ -264,12 +263,33 @@ export default class AudioVisualizerWallpaperExtension extends Extension {
         this._actors = [];
     }
 
-    _startAudioHelper() {
+    _resolveHelperPath() {
+        const configPath = GLib.build_filenamev([this.path, 'config.json']);
         try {
-            console.log(`${LOG_PREFIX}: starting audio helper ${HELPER_PATH}`);
+            const [ok, contents] = GLib.file_get_contents(configPath);
+            if (!ok)
+                throw new Error('file_get_contents failed');
+            const config = JSON.parse(new TextDecoder().decode(contents));
+            if (!config.repoRoot)
+                throw new Error('missing repoRoot');
+            return GLib.build_filenamev([config.repoRoot, 'scripts', 'audio_levels_json.py']);
+        } catch (error) {
+            console.error(`${LOG_PREFIX}: could not read ${configPath}: ${error}`);
+            console.error(`${LOG_PREFIX}: reinstall with install-gnome-extension.sh to regenerate it`);
+            return null;
+        }
+    }
+
+    _startAudioHelper() {
+        const helperPath = this._resolveHelperPath();
+        if (!helperPath)
+            return;
+
+        try {
+            console.log(`${LOG_PREFIX}: starting audio helper ${helperPath}`);
             this._audioCancellable = new Gio.Cancellable();
             this._audioProcess = Gio.Subprocess.new(
-                ['python3', HELPER_PATH],
+                ['python3', helperPath],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
             );
             this._audioStream = new Gio.DataInputStream({
